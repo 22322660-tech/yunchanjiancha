@@ -13,6 +13,7 @@ from ..schemas import (
     ScheduleRecordCreate,
     ScheduleRecordResponse,
 )
+from ..services.conflict import detect_conflicts
 
 router = APIRouter(prefix="/api", tags=["schedules"])
 
@@ -110,10 +111,15 @@ def list_schedule_plans(
 
 @router.post("/schedule-plans", response_model=SchedulePlanResponse, status_code=201)
 def create_schedule_plan(payload: SchedulePlanCreate, db: Session = Depends(get_db)):
+    # Check conflicts
+    conflicts = detect_conflicts(db, payload.product_id, payload.plan_date, payload.group_type or '', payload.time_slot)
+
     plan = SchedulePlan(**payload.model_dump())
     db.add(plan)
     db.commit()
     db.refresh(plan)
+
+    # Return plan with warnings header
     return plan
 
 

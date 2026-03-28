@@ -1,6 +1,7 @@
 from datetime import date, timedelta
+from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,9 @@ from ..schemas import (
     ScheduleRecordResponse,
     WeeklyCalendarItem,
 )
+from ..services.repush import get_repush_list
+from ..services.health import get_health_board, update_all_health_scores
+from ..services.conflict import detect_conflicts
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -124,63 +128,35 @@ def get_weekly_calendar(db: Session = Depends(get_db)):
     return result
 
 
-@router.get("/repush-suggestions", response_model=list[RepushSuggestion])
-def get_repush_suggestions(db: Session = Depends(get_db)):
-    """Return top 5 products that are good candidates for re-scheduling.
+@router.get("/repush-suggestions")
+def get_repush_suggestions(
+    group_type: Optional[str] = Query(None),
+    operator: Optional[str] = Query(None),
+    days: int = Query(7),
+    db: Session = Depends(get_db),
+):
+    return get_repush_list(db, group_type, operator, days)
 
-    Criteria: products with past records tagged 爆款 or 正常, sorted by average
-    order count descending, that have not been scheduled in the last
-    `repurchase_cycle` days.
-    """
-    today = date.today()
 
-    # Sub-query: latest schedule date per product
-    latest_date_sq = (
-        db.query(
-            ScheduleRecord.product_id,
-            func.max(ScheduleRecord.schedule_date).label("last_date"),
-            func.avg(ScheduleRecord.order_count).label("avg_orders"),
-        )
-        .filter(
-            ScheduleRecord.performance_tag.in_(["爆款", "正常"]),
-        )
-        .group_by(ScheduleRecord.product_id)
-        .subquery()
-    )
+@router.get("/health-board")
+def get_health_board_data(
+    group_type: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    return get_health_board(db, group_type)
 
-    rows = (
-        db.query(
-            Product.id,
-            Product.name,
-            Product.repurchase_cycle,
-            latest_date_sq.c.last_date,
-            latest_date_sq.c.avg_orders,
-        )
-        .join(latest_date_sq, Product.id == latest_date_sq.c.product_id)
-        .order_by(latest_date_sq.c.avg_orders.desc())
-        .limit(10)
-        .all()
-    )
 
-    suggestions: list[RepushSuggestion] = []
-    for pid, pname, cycle, last_dt, avg_ord in rows:
-        cycle = cycle or 30
-        if last_dt and (today - last_dt).days >= cycle:
-            reason = f"上次排期 {last_dt.isoformat()}，已超过复购周期 {cycle} 天"
-        elif last_dt:
-            reason = f"历史平均单量 {round(avg_ord or 0, 1)}，表现优秀"
-        else:
-            reason = "历史表现优秀"
-        suggestions.append(
-            RepushSuggestion(
-                product_id=pid,
-                product_name=pname,
-                last_schedule_date=last_dt,
-                avg_orders=round(float(avg_ord or 0), 1),
-                reason=reason,
-            )
-        )
-        if len(suggestions) >= 5:
-            break
+@router.post("/health-update")
+def trigger_health_update(db: Session = Depends(get_db)):
+    return update_all_health_scores(db)
 
-    return suggestions
+
+@router.post("/conflict-check")
+def check_conflicts(
+    product_id: int,
+    plan_date: date,
+    group_type: str,
+    time_slot: str = None,
+    db: Session = Depends(get_db),
+):
+    return detect_conflicts(db, product_id, plan_date, group_type, time_slot)
