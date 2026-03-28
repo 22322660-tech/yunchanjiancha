@@ -49,4 +49,8 @@ export const dashboardApi = {
   stats: (params?: Record<string, unknown>) => api.get('/dashboard/stats', { params }),
   weeklyCalendar: (params?: Record<string, unknown>) => api.get('/dashboard/weekly-calendar', { params }),
   repushSuggestions: (params?: Record<string, unknown>) => api.get('/dashboard/repush-suggestions', { params }),
+  healthBoard: (params?: Record<string, unknown>) => api.get('/dashboard/health-board', { params }),
+  healthUpdate: () => api.post('/dashboard/health-update'),
+  conflictCheck: (data: { product_id: number; plan_date: string; group_type: string; time_slot?: string }) =>
+    api.post('/dashboard/conflict-check', null, { params: data }),
 };
